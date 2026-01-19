@@ -32,15 +32,15 @@ else
 fi
 printf "\n"
 
-# Get staged diff (truncated to 300 lines to stay within token limits)
-DIFF=$(git diff --cached | head -n 300)
+# Get staged diff (truncated to 50 lines, exclude binary files, limit context)
+DIFF=$(git diff --cached --diff-filter=d --unified=0 --no-color -- . ':(exclude)*.pdf' ':(exclude)*.png' ':(exclude)*.jpg' ':(exclude)*.jpeg' ':(exclude)*.gif' ':(exclude)*.svg' | head -n 50)
 
 if [ -z "$DIFF" ]; then
-  printf "No staged diff.\n"
-  exit 0
+  printf "No text diff (binary files only).\n"
+  DIFF="Only binary/image files added (no text changes)."
 fi
 
-printf "🧾 Staged diff (first 300 lines):\n"
+printf "🧾 Staged diff (first 50 lines):\n"
 printf "%s\n" "$DIFF"
 printf "…\n\n"
 
@@ -59,6 +59,7 @@ printf "Given this staged git diff, suggest a commit message using the format:\n
 printf "type(scope): description\n\n" >> "$PROMPT_FILE"
 printf "Optionally, include a short body if helpful.\n\n" >> "$PROMPT_FILE"
 printf "Branch name: %s\n\n" "$BRANCH" >> "$PROMPT_FILE"
+printf "Staged files:\n%s\n\n" "$STAGED" >> "$PROMPT_FILE"
 printf "Diff:\n%s\n" "$DIFF" >> "$PROMPT_FILE"
 
 # Encode the prompt file as a JSON string
@@ -84,18 +85,25 @@ curl -s https://api.openai.com/v1/chat/completions \
   -d @"$JSON_FILE" > "$RESPONSE_FILE"
 
 # Extract the commit message
-COMMIT_MSG=$(jq -r '.choices[0].message.content' < "$RESPONSE_FILE")
+COMMIT_MSG=$(jq -r '.choices[0].message.content' < "$RESPONSE_FILE" 2>/dev/null)
+
+# Check if a valid response was returned
+if [ -z "$COMMIT_MSG" ] || [ "$COMMIT_MSG" = "null" ]; then
+  printf "❌ Failed to generate commit message.\n"
+  printf "\n📄 API Response:\n"
+  cat "$RESPONSE_FILE"
+  printf "\n"
+  # Clean up temporary files
+  rm "$PROMPT_FILE"
+  rm "$JSON_FILE"
+  rm "$RESPONSE_FILE"
+  exit 1
+fi
 
 # Clean up temporary files
 rm "$PROMPT_FILE"
 rm "$JSON_FILE"
 rm "$RESPONSE_FILE"
-
-# Check if a valid response was returned
-if [ -z "$COMMIT_MSG" ] || [ "$COMMIT_MSG" = "null" ]; then
-  printf "❌ Failed to generate commit message.\n"
-  exit 1
-fi
 
 # Display and confirm commit
 printf "\n"
